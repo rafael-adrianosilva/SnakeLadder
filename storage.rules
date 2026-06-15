@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Avatares dos usuários
+    match /avatars/{userId}/{fileName} {
+      // Leitura pública (avatares podem ser vistos por todos)
+      allow read: if true;
+
+      // Escrita: apenas o próprio usuário, com validação de tipo e tamanho
+      allow write: if request.auth != null
+                   && request.auth.uid == userId
+                   && request.resource.size < 2 * 1024 * 1024  // máx 2MB
+                   && request.resource.contentType.matches('image/.*');
+
+      // Deleção: apenas o próprio usuário
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Assets do jogo (read-only para clientes)
+    match /game-assets/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Bloquear tudo mais
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

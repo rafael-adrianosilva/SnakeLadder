@@ -1,0 +1,206 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── HELPER FUNCTIONS ─────────────────────────────────────────────────
+
+    // Verifica se o usuário está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Verifica se o usuário é o dono do documento
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Verifica se o usuário é membro de uma sala
+    function isRoomMember(roomData) {
+      return request.auth.uid in roomData.players;
+    }
+
+    // Verifica se o usuário é o criador da sala
+    function isRoomCreator(roomData) {
+      return request.auth.uid == roomData.createdBy;
+    }
+
+    // Verifica se é o turno do usuário
+    function isCurrentTurn(roomData) {
+      return request.auth.uid == roomData.currentTurn;
+    }
+
+    // Verifica se a sala ainda está no lobby (não iniciou)
+    function isRoomInLobby(roomData) {
+      return roomData.status == 'lobby';
+    }
+
+    // Verifica se a sala está em andamento
+    function isRoomInProgress(roomData) {
+      return roomData.status == 'in_progress';
+    }
+
+    // ─── USUÁRIOS ─────────────────────────────────────────────────────────
+
+    match /users/{userId} {
+      // Leitura: apenas o próprio usuário
+      allow read: if isAuthenticated() && isOwner(userId);
+
+      // Criação: autenticado, apenas o próprio usuário
+      allow create: if isAuthenticated() && isOwner(userId)
+                    && request.resource.data.coins >= 0
+                    && request.resource.data.displayName is string
+                    && request.resource.data.displayName.size() >= 2
+                    && request.resource.data.displayName.size() <= 20;
+
+      // Atualização: o usuário pode editar apenas campos não-críticos
+      // Moedas só podem ser alteradas pelo servidor (Admin SDK bypass)
+      allow update: if isAuthenticated() && isOwner(userId)
+                    && request.resource.data.diff(resource.data)
+                       .affectedKeys()
+                       .hasOnly(['displayName', 'avatarConfig', 'lastSeen',
+                                 'preferences', 'statistics']);
+
+      // Deleção: não permitida pelo cliente
+      allow delete: if false;
+    }
+
+    // ─── SALAS DE JOGO ────────────────────────────────────────────────────
+
+    match /rooms/{roomId} {
+      // Leitura: qualquer usuário autenticado (necessário para entrar por
+      // código antes de virar membro). E-mails não ficam na sala, só
+      // displayName/avatar.
+      allow read: if isAuthenticated();
+
+      // Criação: usuário autenticado pode criar uma sala
+      allow create: if isAuthenticated()
+                    && request.resource.data.createdBy == request.auth.uid
+                    && request.resource.data.status == 'lobby'
+                    && request.resource.data.maxPlayers in [2, 3, 4]
+                    && request.resource.data.players[request.auth.uid] != null;
+
+      // Atualização: membros da sala OU um novo jogador entrando no lobby.
+      allow update: if isAuthenticated() && validateRoomUpdate();
+
+      // Deleção: apenas o criador, e apenas se a sala estiver no lobby
+      allow delete: if isAuthenticated()
+                    && isRoomCreator(resource.data)
+                    && isRoomInLobby(resource.data);
+
+      // Validação de atualização da sala.
+      //
+      // NOTA DE SEGURANÇA: este modo é "client-authoritative" (sem Cloud
+      // Functions / plano Blaze). O jogador da vez aplica a própria jogada
+      // diretamente. Para produção com anti-cheat forte, mover as jogadas para
+      // a Cloud Function `validateMove` e restringir estas regras de volta a
+      // apenas presença durante `in_progress`.
+      function validateRoomUpdate() {
+        let currentData = resource.data;
+        let newData = request.resource.data;
+        let changedKeys = newData.diff(currentData).affectedKeys();
+
+        return (
+          // Novo jogador entrando no lobby (adiciona SÓ a própria entrada)
+          (isRoomInLobby(currentData)
+            && changedKeys.hasOnly(['players'])
+            && !(request.auth.uid in currentData.players)
+            && request.auth.uid in newData.players
+            && onlyOwnPlayerEntryChanged())
+
+          // Membro do lobby alterando APENAS o próprio estado (ready/nome/avatar)
+          || (isRoomMember(currentData) && isRoomInLobby(currentData)
+            && changedKeys.hasOnly(['players'])
+            && onlyOwnPlayerEntryChanged())
+
+          // Criador inicia a partida / muda configurações no lobby
+          || (isRoomCreator(currentData) && isRoomInLobby(currentData)
+            && changedKeys.hasOnly(['settings', 'status', 'players',
+                                    'turnOrder', 'currentTurn', 'board']))
+
+          // Jogador da vez aplica a jogada durante a partida.
+          // Só pode alterar a PRÓPRIA entrada em `players` (não move oponentes).
+          || (isRoomMember(currentData) && isRoomInProgress(currentData)
+            && isCurrentTurn(currentData)
+            && changedKeys.hasOnly(['players', 'currentTurn', 'lastMove',
+                                    'gameLog', 'winner', 'status', 'finishedAt'])
+            && onlyOwnPlayerEntryChanged())
+
+          // Qualquer membro atualiza apenas a própria presença
+          || (isRoomMember(currentData)
+            && changedKeys.hasOnly(['players'])
+            && onlyOwnPlayerEntryChanged()
+            && onlyPresenceChanged(currentData, newData))
+        );
+      }
+
+      // Garante que apenas a entrada do próprio usuário em `players` mudou
+      function onlyOwnPlayerEntryChanged() {
+        return request.resource.data.players.diff(resource.data.players)
+               .affectedKeys()
+               .hasOnly([request.auth.uid]);
+      }
+
+      // Verifica se apenas campos de presença foram alterados
+      function onlyPresenceChanged(currentData, newData) {
+        let uid = request.auth.uid;
+        return newData.players[uid].diff(currentData.players[uid])
+               .affectedKeys()
+               .hasOnly(['lastSeen', 'isConnected']);
+      }
+    }
+
+    // ─── CHAT DA SALA ─────────────────────────────────────────────────────
+
+    match /rooms/{roomId}/messages/{messageId} {
+      // Leitura: membros da sala
+      allow read: if isAuthenticated()
+                  && isRoomMember(get(/databases/$(database)/documents/rooms/$(roomId)).data);
+
+      // Escrita: membros da sala, com validação de conteúdo
+      allow create: if isAuthenticated()
+                    && isRoomMember(get(/databases/$(database)/documents/rooms/$(roomId)).data)
+                    && request.resource.data.authorId == request.auth.uid
+                    && request.resource.data.text is string
+                    && request.resource.data.text.size() > 0
+                    && request.resource.data.text.size() <= 200
+                    && request.resource.data.type in ['text', 'emoji', 'system'];
+
+      // Mensagens não podem ser editadas ou deletadas por clientes
+      allow update, delete: if false;
+    }
+
+    // ─── HISTÓRICO DE PARTIDAS ────────────────────────────────────────────
+
+    match /matchHistory/{matchId} {
+      // Leitura: qualquer usuário autenticado que participou
+      allow read: if isAuthenticated()
+                  && request.auth.uid in resource.data.playerIds;
+
+      // Criação e edição: apenas servidor (Cloud Functions)
+      allow write: if false;
+    }
+
+    // ─── LEADERBOARD ──────────────────────────────────────────────────────
+
+    match /leaderboard/{entry} {
+      // Leitura: qualquer usuário autenticado
+      allow read: if isAuthenticated();
+
+      // Escrita: apenas servidor
+      allow write: if false;
+    }
+
+    // ─── CONFIGURAÇÕES GLOBAIS (READ-ONLY para clientes) ──────────────────
+
+    match /config/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ─── DENY ALL (regra padrão de bloqueio) ──────────────────────────────
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

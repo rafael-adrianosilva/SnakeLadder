@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "presence": {
+      "$roomId": {
+        ".read": "auth != null",
+        "$userId": {
+          ".write": "auth != null && auth.uid == $userId",
+          ".validate": "newData.hasChildren(['online', 'lastSeen'])"
+        }
+      }
+    }
+  }
+}

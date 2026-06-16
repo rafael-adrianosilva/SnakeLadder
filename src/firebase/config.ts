@@ -7,9 +7,10 @@
  *   - Número:  962831380726   (messagingSenderId)
  *
  * Os valores `apiKey` e `appId` são públicos (não são segredos), mas variam
- * por app web registrado no console. Eles ficam em variáveis de ambiente
- * (arquivo .env, ver .env.example) para não acoplar o código a um app
- * específico. Os demais valores são derivados do ID do projeto.
+ * por app web registrado no console. Cada campo tem um default fixo para o
+ * app `snakeladdersbr`; as variáveis de ambiente (arquivo .env, ver
+ * .env.example) servem apenas para sobrescrever esses defaults. Isso garante
+ * que o build funcione mesmo que o ambiente (ex.: Vercel) não defina as vars.
  */
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, type Auth } from 'firebase/auth';
@@ -26,17 +27,27 @@ import {
 } from 'firebase/functions';
 import { getDatabase, connectDatabaseEmulator, type Database } from 'firebase/database';
 
+// Lê uma variável VITE_*, removendo aspas e espaços que às vezes vêm colados
+// por engano ao definir o valor no painel da Vercel/host. Retorna undefined
+// quando vazia, para que o operador `??` caia no default abaixo.
+const env = (value: string | undefined): string | undefined => {
+  const clean = value?.trim().replace(/^['"]|['"]$/g, '').trim();
+  return clean ? clean : undefined;
+};
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ?? 'snakeladdersbr.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID ?? 'snakeladdersbr',
+  apiKey: env(import.meta.env.VITE_FIREBASE_API_KEY) ?? 'AIzaSyDNmadRSMvTRDHG1DEtXrGwqQgQ079an60',
+  authDomain: env(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN) ?? 'snakeladdersbr.firebaseapp.com',
+  projectId: env(import.meta.env.VITE_FIREBASE_PROJECT_ID) ?? 'snakeladdersbr',
   storageBucket:
-    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ?? 'snakeladdersbr.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? '962831380726',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    env(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET) ?? 'snakeladdersbr.firebasestorage.app',
+  messagingSenderId: env(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID) ?? '962831380726',
+  appId:
+    env(import.meta.env.VITE_FIREBASE_APP_ID) ??
+    '1:962831380726:web:d4f3c12dbb4eb9823d3cd7',
   // Realtime Database (usado para presença — ver seção 8.5 do prompt mestre)
   databaseURL:
-    import.meta.env.VITE_FIREBASE_DATABASE_URL ??
+    env(import.meta.env.VITE_FIREBASE_DATABASE_URL) ??
     'https://snakeladdersbr-default-rtdb.firebaseio.com',
 };
 

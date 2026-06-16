@@ -1,11 +1,11 @@
-import { useState } from 'react';
-import { ArrowLeft, Loader2, Copy, Crown, Check, Trophy } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ArrowLeft, Loader2, Copy, Crown, Check, Trophy, Link2 } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
 import { useOnlineStore } from '../store/onlineStore';
 import Board from '../components/Board';
 import PlayerHUD from '../components/PlayerHUD';
 import Dice from '../components/Dice';
-import type { Player } from '../engine/gameEngine';
+import { resolveMove, type Player } from '../engine/gameEngine';
 import type { OnlineRoom } from '../firebase/online';
 
 function toPlayers(room: OnlineRoom): Player[] {
@@ -14,12 +14,68 @@ function toPlayers(room: OnlineRoom): Player[] {
     .map((p) => ({ id: p.uid, name: p.displayName, color: p.color, position: p.position, isBot: false }));
 }
 
+/**
+ * Reproduz o boneco "andando" casa a casa no online. A posição vem pronta do
+ * Firestore (já no destino final); aqui reconstruímos o trajeto a partir do
+ * último lance (`lastMove`) e sobrescrevemos a posição do jogador da vez,
+ * quadro a quadro, até pousar — incluindo o pulo final da cobra/escada.
+ */
+function useWalkingPlayers(room: OnlineRoom): Player[] {
+  const players = toPlayers(room);
+  const [override, setOverride] = useState<{ id: string; pos: number } | null>(null);
+  const seenMove = useRef<string | null>(null);
+  const mounted = useRef(false);
+
+  useLayoutEffect(() => {
+    const move = room.lastMove;
+    const key = move ? `${move.playerId}|${move.from}|${move.to}|${move.diceResult}` : null;
+
+    // Na 1ª montagem não reanima o lance que já estava na sala ao entrar.
+    if (!mounted.current) {
+      mounted.current = true;
+      seenMove.current = key;
+      return;
+    }
+    if (!move || key === seenMove.current) return;
+    seenMove.current = key;
+
+    const { path, final, effect } = resolveMove(move.from, move.diceResult, room.board);
+    const frames = [...path];
+    if (effect !== 'none') frames.push(final); // pulo da cobra/escada
+    if (frames.length === 0) return;
+
+    setOverride({ id: move.playerId, pos: move.from });
+    let i = 0;
+    const timer = window.setInterval(() => {
+      setOverride({ id: move.playerId, pos: frames[i] });
+      i += 1;
+      if (i >= frames.length) {
+        window.clearInterval(timer);
+        window.setTimeout(() => setOverride(null), 200);
+      }
+    }, 170);
+    return () => window.clearInterval(timer);
+  }, [room.lastMove, room.board]);
+
+  if (!override) return players;
+  return players.map((p) => (p.id === override.id ? { ...p, position: override.pos } : p));
+}
+
 export default function OnlineScreen() {
   const goHome = useGameStore((s) => s.goHome);
   const { status, error, room, nickname, setNickname, create, join, leave } = useOnlineStore();
 
+  // Mantém o código da sala na URL (?room=CODE) enquanto estamos numa sala,
+  // para que a barra de endereços já seja um link compartilhável.
+  useEffect(() => {
+    if (room?.roomCode && status !== 'menu') {
+      window.history.replaceState(null, '', `${window.location.pathname}?room=${room.roomCode}`);
+    }
+  }, [room?.roomCode, status]);
+
   const back = () => {
     leave();
+    window.history.replaceState(null, '', window.location.pathname);
     goHome();
   };
 
@@ -67,9 +123,17 @@ function Menu({
   onCreate: (n: 2 | 3 | 4) => void;
   onJoin: (code: string) => void;
 }) {
-  const [code, setCode] = useState('');
+  // Pré-preenche o código quando o link de convite traz ?room=CODE.
+  const [code, setCode] = useState(
+    () => new URLSearchParams(window.location.search).get('room')?.toUpperCase().slice(0, 6) ?? '',
+  );
   const [maxPlayers, setMaxPlayers] = useState<2 | 3 | 4>(2);
   const ready = nickname.trim().length >= 2;
+  const joinHint = !ready
+    ? 'Digite seu nome (mín. 2 letras) no campo acima para entrar.'
+    : code.length < 4
+      ? 'Digite o código da sala (6 caracteres).'
+      : null;
 
   return (
     <main className="w-full max-w-md space-y-6">
@@ -108,6 +172,9 @@ function Menu({
         >
           Criar sala
         </button>
+        {!ready && (
+          <p className="text-xs text-slate-500">Digite seu nome no campo acima para criar a sala.</p>
+        )}
       </div>
 
       <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
@@ -126,6 +193,7 @@ function Menu({
         >
           Entrar
         </button>
+        {joinHint && <p className="text-xs text-slate-500">{joinHint}</p>}
       </div>
     </main>
   );
@@ -154,7 +222,17 @@ function Lobby({ room }: { room: OnlineRoom }) {
             <Copy className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-xs text-slate-400 mt-2">Compartilhe para os amigos entrarem.</p>
+        <p className="text-xs text-slate-400 mt-2">Compartilhe o código ou o link para os amigos entrarem.</p>
+        <button
+          onClick={() =>
+            navigator.clipboard?.writeText(
+              `${window.location.origin}${window.location.pathname}?room=${room.roomCode}`,
+            )
+          }
+          className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-semibold"
+        >
+          <Link2 className="w-4 h-4" /> Copiar link de convite
+        </button>
       </div>
 
       <div className="space-y-2">
@@ -207,7 +285,7 @@ function Lobby({ room }: { room: OnlineRoom }) {
 function OnlineGame({ room }: { room: OnlineRoom }) {
   const { myUid, roll } = useOnlineStore();
   const uid = myUid();
-  const players = toPlayers(room);
+  const players = useWalkingPlayers(room);
   const currentIndex = players.findIndex((p) => p.id === room.currentTurn);
   const isMyTurn = room.currentTurn === uid;
   const current = room.currentTurn ? room.players[room.currentTurn] : null;

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useGameStore } from './store/gameStore';
 import HomeScreen from './screens/HomeScreen';
 import SetupScreen from './screens/SetupScreen';
@@ -9,6 +10,14 @@ import OnlineScreen from './screens/OnlineScreen';
 export default function App() {
   const screen = useGameStore((s) => s.screen);
   const toast = useGameStore((s) => s.toast);
+  const openOnline = useGameStore((s) => s.openOnline);
+
+  // Link de convite: abre direto a tela online quando a URL traz ?room=CODE.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('room')) {
+      openOnline();
+    }
+  }, [openOnline]);
 
   return (
     <>

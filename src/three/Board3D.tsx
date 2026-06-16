@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { RoundedBox } from '@react-three/drei';
-import { DEFAULT_SNAKES, DEFAULT_LADDERS } from '../engine/boardConfig';
+import { DEFAULT_BOARD, type BoardConfig } from '../engine/gameEngine';
 import { cellToWorld, numberTexture, tileColor, TILE, TILE_H } from './boardLayout';
 
 export interface PawnSpec {
@@ -11,10 +12,11 @@ export interface PawnSpec {
 
 interface Board3DProps {
   pawns?: PawnSpec[];
+  board?: BoardConfig;
 }
 
 /** Tabuleiro 3D completo: blocos numerados, escadas, cobras e peões. */
-export default function Board3D({ pawns = DEFAULT_PAWNS }: Board3DProps) {
+export default function Board3D({ pawns = DEFAULT_PAWNS, board = DEFAULT_BOARD }: Board3DProps) {
   const cells = useMemo(() => Array.from({ length: 100 }, (_, i) => i + 1), []);
 
   return (
@@ -32,14 +34,19 @@ export default function Board3D({ pawns = DEFAULT_PAWNS }: Board3DProps) {
       </RoundedBox>
 
       {cells.map((n) => (
-        <Tile key={n} n={n} />
+        <Tile
+          key={n}
+          n={n}
+          isLadder={board.ladders[n] !== undefined}
+          isSnake={board.snakes[n] !== undefined}
+        />
       ))}
 
-      {Object.entries(DEFAULT_LADDERS).map(([base, top]) => (
+      {Object.entries(board.ladders).map(([base, top]) => (
         <Ladder key={`l-${base}`} base={Number(base)} top={top} />
       ))}
 
-      {Object.entries(DEFAULT_SNAKES).map(([head, tail], i) => (
+      {Object.entries(board.snakes).map(([head, tail], i) => (
         <Snake key={`s-${head}`} head={Number(head)} tail={tail} index={i} />
       ))}
 
@@ -59,10 +66,8 @@ const DEFAULT_PAWNS: PawnSpec[] = [
 ];
 
 // ─── Casa ────────────────────────────────────────────────────────────────
-function Tile({ n }: { n: number }) {
+function Tile({ n, isLadder, isSnake }: { n: number; isLadder: boolean; isSnake: boolean }) {
   const pos = cellToWorld(n);
-  const isLadder = DEFAULT_LADDERS[n] !== undefined;
-  const isSnake = DEFAULT_SNAKES[n] !== undefined;
   const color = isLadder ? '#bbf7d0' : isSnake ? '#fecdd3' : tileColor(n);
   const tex = useMemo(() => numberTexture(n), [n]);
 
@@ -190,13 +195,22 @@ function Snake({ head, tail, index }: { head: number; tail: number; index: numbe
 
 // ─── Peão ────────────────────────────────────────────────────────────────
 function Pawn({ cell, color, offset }: { cell: number; color: string; offset: number }) {
-  const pos = cellToWorld(cell);
+  const ref = useRef<THREE.Group>(null);
   const dx = ((offset % 2) - 0.5) * 0.28;
   const dz = (Math.floor(offset / 2) - 0.5) * 0.28;
-  const y = TILE_H;
+  const target = useMemo(() => cellToWorld(cell), [cell]);
+
+  // Desliza suavemente até a casa-alvo — anima o "andar" do peão em 3D.
+  useFrame((_, delta) => {
+    const g = ref.current;
+    if (!g) return;
+    const t = Math.min(1, delta * 9);
+    g.position.x += (target.x + dx - g.position.x) * t;
+    g.position.z += (target.z + dz - g.position.z) * t;
+  });
 
   return (
-    <group position={[pos.x + dx, y, pos.z + dz]}>
+    <group ref={ref} position={[target.x + dx, TILE_H, target.z + dz]}>
       <mesh position={[0, 0.07, 0]} castShadow>
         <cylinderGeometry args={[0.2, 0.26, 0.14, 24]} />
         <Glossy color={color} />

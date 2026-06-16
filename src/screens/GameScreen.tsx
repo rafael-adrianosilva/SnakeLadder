@@ -1,6 +1,6 @@
 import { ArrowLeft } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
-import Board from '../components/Board';
+import GameBoard3D from '../components/GameBoard3D';
 import Dice from '../components/Dice';
 import PlayerHUD from '../components/PlayerHUD';
 
@@ -41,7 +41,7 @@ export default function GameScreen() {
 
       <div className="w-full max-w-md space-y-4">
         <PlayerHUD players={players} currentIndex={currentIndex} />
-        <Board players={players} board={board} />
+        <GameBoard3D players={players} board={board} />
 
         <div className="flex items-center justify-between gap-4">
           <div className="flex-1 h-24 overflow-y-auto rounded-xl bg-slate-900/50 border border-slate-800 p-2 text-[11px] text-slate-400 space-y-1">

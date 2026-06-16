@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, Loader2, Copy, Crown, Check, Trophy, Link2 } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
 import { useOnlineStore } from '../store/onlineStore';
-import Board from '../components/Board';
+import GameBoard3D from '../components/GameBoard3D';
 import PlayerHUD from '../components/PlayerHUD';
 import Dice from '../components/Dice';
 import { resolveMove, type Player } from '../engine/gameEngine';
@@ -300,7 +300,7 @@ function OnlineGame({ room }: { room: OnlineRoom }) {
       </div>
 
       <PlayerHUD players={players} currentIndex={currentIndex < 0 ? 0 : currentIndex} />
-      <Board players={players} board={room.board} />
+      <GameBoard3D players={players} board={room.board} />
 
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1 text-xs text-slate-400">

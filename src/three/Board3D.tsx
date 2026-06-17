@@ -200,13 +200,42 @@ function Pawn({ cell, color, offset }: { cell: number; color: string; offset: nu
   const dz = (Math.floor(offset / 2) - 0.5) * 0.28;
   const target = useMemo(() => cellToWorld(cell), [cell]);
 
-  // Desliza suavemente até a casa-alvo — anima o "andar" do peão em 3D.
+  const lastCell = useRef(cell);
+  const startX = useRef(target.x + dx);
+  const startZ = useRef(target.z + dz);
+  const progress = useRef(1); // 1 significa posicionado na casa final
+
+  // Reinicia a animação quando a casa do peão muda
+  if (cell !== lastCell.current) {
+    if (ref.current) {
+      startX.current = ref.current.position.x;
+      startZ.current = ref.current.position.z;
+    }
+    lastCell.current = cell;
+    progress.current = 0;
+  }
+
   useFrame((_, delta) => {
     const g = ref.current;
     if (!g) return;
-    const t = Math.min(1, delta * 9);
-    g.position.x += (target.x + dx - g.position.x) * t;
-    g.position.z += (target.z + dz - g.position.z) * t;
+
+    if (progress.current < 1) {
+      // Ajusta o progresso de acordo com o intervalo entre passos (160ms = ~6.25 de velocidade)
+      progress.current = Math.min(1, progress.current + delta * 6.25);
+
+      // Interpolação linear nos eixos X e Z (plano horizontal do tabuleiro)
+      g.position.x = THREE.MathUtils.lerp(startX.current, target.x + dx, progress.current);
+      g.position.z = THREE.MathUtils.lerp(startZ.current, target.z + dz, progress.current);
+
+      // Pulo em arco (parábola) adicionado ao eixo Y (altura)
+      const jumpHeight = 0.42;
+      g.position.y = TILE_H + Math.sin(progress.current * Math.PI) * jumpHeight;
+    } else {
+      // Posição final estabilizada
+      g.position.x = target.x + dx;
+      g.position.z = target.z + dz;
+      g.position.y = TILE_H;
+    }
   });
 
   return (

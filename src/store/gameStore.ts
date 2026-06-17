@@ -10,6 +10,7 @@ import {
   type RuleVariant,
 } from '../engine/gameEngine';
 import { BOT_PRESETS, botThinkingTime, rollDiceForBot } from '../engine/botAI';
+import { sound } from '../utils/soundSynthesizer';
 
 export type Screen = 'home' | 'setup' | 'game' | 'victory' | 'board3d' | 'online';
 export type GameMode = 'bot' | 'local';
@@ -58,14 +59,15 @@ export const useGameStore = create<GameStore>((set, get) => {
     const { players, currentIndex, board, variant } = get();
     const player = players[currentIndex];
 
-    // Animação do dado
+    // Animação de rolagem de dados com som rítmico
     set({ phase: 'rolling' });
     for (let i = 0; i < 10; i++) {
       set({ diceFace: Math.floor(Math.random() * 6) + 1 });
-      await sleep(60);
+      sound.playDiceRoll(); // Toca o som do dado girando
+      await sleep(75);
     }
     set({ dice: diceValue, diceFace: diceValue });
-    await sleep(300);
+    await sleep(350);
 
     // Movimento casa a casa
     set({ phase: 'moving' });
@@ -75,33 +77,46 @@ export const useGameStore = create<GameStore>((set, get) => {
       get().showToast(`${player.name} tirou ${diceValue} e passou de 100 — não move.`);
     }
 
+    // Peão saltitando casa por casa
     for (const step of result.path) {
       setPlayerPosition(player.id, step);
-      await sleep(160);
+      sound.playJump(); // Toca o som a cada pulo de casa
+      await sleep(180);
     }
 
-    // Efeito de cobra/escada
+    // Efeitos especiais de cobra/escada
     if (result.effect !== 'none') {
       await sleep(350);
       setPlayerPosition(player.id, result.final);
       set({ lastEffect: result.effect });
-      const verb = result.effect === 'ladder' ? 'subiu por uma escada 🪜' : 'caiu numa cobra 🐍';
+
+      const isLadder = result.effect === 'ladder';
+      if (isLadder) {
+        sound.playLadder(); // Toca som alegre de subida
+      } else {
+        sound.playSnake();  // Toca som dramático de queda
+      }
+
+      const verb = isLadder ? 'subiu por uma escada 🪜' : 'caiu numa cobra 🐍';
       pushLog(`${player.name} ${verb} (${result.landed} → ${result.final}).`);
-      await sleep(500);
+      await sleep(600);
       set({ lastEffect: null });
     } else if (result.path.length > 0) {
       pushLog(`${player.name} foi para a casa ${result.final}.`);
     }
 
-    // Vitória
+    // Declaração de vitória e fim de jogo
     if (result.won) {
+      sound.playVictory(); // Toca som de vitória
       set({ winner: player, screen: 'victory', phase: 'idle' });
       return;
     }
 
-    // Próximo turno
+    // Transição de turnos
     const next = (currentIndex + 1) % players.length;
     set({ currentIndex: next, phase: 'idle', dice: null });
+
+    // Inicia o turno do Bot se aplicável
     maybeRunBot();
   }
 
